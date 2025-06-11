@@ -87,8 +87,9 @@ async function startCamera() {
     const stream = await navigator.mediaDevices.getUserMedia({
       video: {
         facingMode: "user",
-        width: { ideal: 1280 },
-        height: { ideal: 720 },
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
+        frameRate: { ideal: 30 }
       },
     });
 
@@ -130,7 +131,7 @@ async function startCamera() {
             .detectAllFaces(
               video,
               new faceapi.TinyFaceDetectorOptions({
-                inputSize: 224, // Must be divisible by 32
+                inputSize: 416,
                 scoreThreshold: 0.3,
               })
             )
@@ -146,46 +147,24 @@ async function startCamera() {
           const ctx = canvas.getContext("2d");
           ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-          // Update scan elements when face is detected
-          const scanCircle = document.querySelector(".scan-circle");
-          const scanRing = document.querySelector(".scan-ring");
-          const scanRing2 = document.querySelector(".scan-ring-2");
-          const scanRing3 = document.querySelector(".scan-ring-3");
-          const scanDots = document.querySelector(".scan-dots");
-          const scanLine = document.querySelector(".scan-line");
-
+          // Draw circle when face is detected
           if (resizedDetections.length > 0) {
             const box = resizedDetections[0].detection.box;
             const size = Math.max(box.width, box.height) * 1.2;
             const centerX = box.x + box.width / 2;
             const centerY = box.y + box.height / 2;
 
-            // Only show the main circle
-            scanCircle.style.display = "block";
-            scanCircle.style.width = size + "px";
-            scanCircle.style.height = size + "px";
-            scanCircle.style.left = centerX - size / 2 + "px";
-            scanCircle.style.top = centerY - size / 2 + "px";
-
-            // Hide all other elements
-            scanRing.style.display = "none";
-            scanRing2.style.display = "none";
-            scanRing3.style.display = "none";
-            scanDots.style.display = "none";
-            scanLine.style.display = "none";
-          } else {
-            // Hide all elements when no face is detected
-            scanCircle.style.display = "none";
-            scanRing.style.display = "none";
-            scanRing2.style.display = "none";
-            scanRing3.style.display = "none";
-            scanDots.style.display = "none";
-            scanLine.style.display = "none";
+            // Draw circle
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, size / 2, 0, 2 * Math.PI);
+            ctx.strokeStyle = '#00ff00';
+            ctx.lineWidth = 2;
+            ctx.stroke();
           }
         } catch (err) {
           logError("Face detection error: " + err.message);
         }
-      }, 200); // Increased interval from 100ms to 200ms
+      }, 200);
     }, 500);
 
     console.log("Camera access granted");

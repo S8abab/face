@@ -42,17 +42,13 @@ function waitForFaceAPI() {
 async function loadModels() {
     try {
         const faceapi = await waitForFaceAPI();
-        console.log('Face API loaded, loading models...');
         
-        // Load models from CDN with correct path
+        // Load only essential models for face detection
         const MODEL_URL = 'https://justadudewhohacks.github.io/face-api.js/models';
         await Promise.all([
             faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
-            faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
-            faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
-            faceapi.nets.faceExpressionNet.loadFromUri(MODEL_URL)
+            faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL)
         ]);
-        console.log('Models loaded');
         return faceapi;
     } catch (err) {
         logError('Error loading models: ' + err.message);
@@ -106,20 +102,15 @@ async function startCamera() {
         
         // Start face detection after a short delay, independent of video events
         setTimeout(() => {
-            console.log('Inside setTimeout, initiating detection interval.');
             // Initial update of display size
             updateDisplaySize();
-            console.log('Initial displaySize updated.');
 
             // Update display size on window resize
             window.addEventListener('resize', updateDisplaySize);
 
             setInterval(async () => {
-                console.log('setInterval callback triggered');
-                
                 // Check if video is ready before processing
                 if (video.readyState < 4) {
-                    console.log('Video not ready (readyState:', video.readyState, '). Skipping detection.');
                     return; 
                 }
 
@@ -129,15 +120,13 @@ async function startCamera() {
                         return;
                     }
 
-                    console.log('Current displaySize:', displaySize);
-
                     const detections = await faceapi.detectAllFaces(
                         video, 
                         new faceapi.TinyFaceDetectorOptions({
-                            inputSize: 416,
+                            inputSize: 320, // Reduced from 416 for better performance
                             scoreThreshold: 0.3
                         })
-                    ).withFaceLandmarks().withFaceExpressions().withFaceDescriptors();
+                    ).withFaceLandmarks();
 
                     // Resize detections to match display size
                     const resizedDetections = faceapi.resizeResults(detections, displaySize);
@@ -156,11 +145,11 @@ async function startCamera() {
                     
                     if (resizedDetections.length > 0) {
                         const box = resizedDetections[0].detection.box;
-                        const size = Math.max(box.width, box.height) * 1.2; // Make circle slightly larger than face
+                        const size = Math.max(box.width, box.height) * 1.2;
                         const centerX = box.x + box.width / 2;
                         const centerY = box.y + box.height / 2;
                         
-                        // Update scan circle
+                        // Update scan elements
                         scanCircle.style.display = 'block';
                         scanCircle.style.width = size + 'px';
                         scanCircle.style.height = size + 'px';
@@ -202,23 +191,6 @@ async function startCamera() {
                             dot.style.animationDelay = (i * 0.1) + 's';
                             scanDots.appendChild(dot);
                         }
-
-                        // Log detection info for debugging
-                        console.log('Face detected:', {
-                            box: {
-                                x: box.x,
-                                y: box.y,
-                                width: box.width,
-                                height: box.height,
-                                score: resizedDetections[0].detection.score
-                            },
-                            hasDescriptor: !!resizedDetections[0].descriptor,
-                            descriptorLength: resizedDetections[0].descriptor?.length,
-                            landmarks: resizedDetections[0].landmarks?.positions?.length,
-                            expressions: resizedDetections[0].expressions
-                        });
-
-                        console.log('Number of detections:', resizedDetections.length);
                     } else {
                         scanCircle.style.display = 'none';
                         scanRing.style.display = 'none';
@@ -230,8 +202,8 @@ async function startCamera() {
                 } catch (err) {
                     logError('Face detection error: ' + err.message);
                 }
-            }, 100);
-        }, 500); // 500ms delay
+            }, 200); // Increased interval from 100ms to 200ms
+        }, 500);
 
         console.log('Camera access granted');
     } catch (err) {

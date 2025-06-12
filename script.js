@@ -4,8 +4,8 @@ const canvas = document.getElementById("overlay");
 let displaySize = { width: 0, height: 0 };
 
 // Add loading screen element
-const loadingScreen = document.createElement('div');
-loadingScreen.id = 'loading-screen';
+const loadingScreen = document.createElement("div");
+loadingScreen.id = "loading-screen";
 loadingScreen.innerHTML = `
   <div class="loading-content">
     <div class="loading-spinner"></div>
@@ -57,15 +57,16 @@ async function loadModels() {
   try {
     const faceapi = await waitForFaceAPI();
 
-    // Load only essential models for face detection
+    // Load models including face recognition
     const MODEL_URL = "https://justadudewhohacks.github.io/face-api.js/models";
     await Promise.all([
       faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
       faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+      faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
     ]);
-    
+
     // Hide loading screen after models are loaded
-    loadingScreen.style.display = 'none';
+    loadingScreen.style.display = "none";
     return faceapi;
   } catch (err) {
     logError("Error loading models: " + err.message);
@@ -74,7 +75,7 @@ async function loadModels() {
 }
 
 // Add CSS for loading screen
-const style = document.createElement('style');
+const style = document.createElement("style");
 style.textContent = `
   #loading-screen {
     position: fixed;
@@ -142,7 +143,7 @@ async function startCamera() {
         facingMode: "user",
         width: { ideal: 1920 },
         height: { ideal: 1080 },
-        frameRate: { ideal: 30 }
+        frameRate: { ideal: 30 },
       },
     });
 
@@ -188,7 +189,8 @@ async function startCamera() {
                 scoreThreshold: 0.3,
               })
             )
-            .withFaceLandmarks();
+            .withFaceLandmarks()
+            .withFaceDescriptors();
 
           // Resize detections to match display size
           const resizedDetections = faceapi.resizeResults(
@@ -200,7 +202,7 @@ async function startCamera() {
           const ctx = canvas.getContext("2d");
           ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-          // Draw circle when face is detected
+          // Draw circle when face is detected and emit descriptor
           if (resizedDetections.length > 0) {
             const box = resizedDetections[0].detection.box;
             const size = Math.max(box.width, box.height) * 1.2;
@@ -210,9 +212,24 @@ async function startCamera() {
             // Draw circle
             ctx.beginPath();
             ctx.arc(centerX, centerY, size / 2, 0, 2 * Math.PI);
-            ctx.strokeStyle = '#00ff00';
+            ctx.strokeStyle = "#00ff00";
             ctx.lineWidth = 2;
             ctx.stroke();
+
+            // Send face descriptor to React Native
+            const faceDescriptor = resizedDetections[0].descriptor;
+            if (window.ReactNativeWebView) {
+            console.log(faceDescriptor)
+              window.ReactNativeWebView.postMessage(
+                JSON.stringify({
+                  type: "FACE_DETECTED",
+                  data: {
+                    descriptor: Array.from(faceDescriptor), // Convert Float32Array to regular array
+                    timestamp: Date.now(),
+                  },
+                })
+              );
+            }
           }
         } catch (err) {
           logError("Face detection error: " + err.message);

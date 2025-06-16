@@ -24,7 +24,8 @@ loadingScreen.id = "loading-screen";
 loadingScreen.innerHTML = `
   <div class="loading-content">
     <div class="loading-spinner"></div>
-    <div class="loading-text">Please wait...</div>
+    <div class="loading-text">Initializing...</div>
+    <div class="loading-status"></div>
   </div>
 `;
 document.body.appendChild(loadingScreen);
@@ -90,22 +91,34 @@ function waitForFaceAPI() {
   });
 }
 
+function updateLoadingStatus(message) {
+  const statusElement = document.querySelector('.loading-status');
+  if (statusElement) {
+    statusElement.textContent = message;
+  }
+  console.log("Loading status:", message);
+  sendToReactNative("info", message);
+}
+
 async function loadModels() {
   try {
+    updateLoadingStatus("Waiting for face-api.js...");
     const faceapi = await waitForFaceAPI();
-
-    // Load models including face recognition
+    
+    updateLoadingStatus("Loading...");
     const MODEL_URL = "https://justadudewhohacks.github.io/face-api.js/models";
+    
     await Promise.all([
       faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
       faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
       faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
     ]);
 
-    // Hide loading screen after models are loaded
+    updateLoadingStatus("Models loaded successfully!");
     loadingScreen.style.display = "none";
     return faceapi;
   } catch (err) {
+    updateLoadingStatus("Error loading models: " + err.message);
     logError("Error loading models: " + err.message);
     throw err;
   }
@@ -152,30 +165,25 @@ document.head.appendChild(style);
 
 async function startCamera() {
   try {
-    console.log("Checking mediaDevices support...");
-    sendToReactNative("info", "Checking mediaDevices support...");
+    updateLoadingStatus("Checking camera access...");
+    
     if (!navigator.mediaDevices) {
       navigator.mediaDevices = {};
     }
 
     if (!navigator.mediaDevices.getUserMedia) {
-      navigator.mediaDevices.getUserMedia = function (constraints) {
-        const getUserMedia =
-          navigator.webkitGetUserMedia || navigator.mozGetUserMedia;
-
+      navigator.mediaDevices.getUserMedia = function(constraints) {
+        const getUserMedia = navigator.webkitGetUserMedia || navigator.mozGetUserMedia;
         if (!getUserMedia) {
-          return Promise.reject(
-            new Error("getUserMedia is not implemented in this browser")
-          );
+          throw new Error("getUserMedia is not implemented in this browser");
         }
-
-        return new Promise(function (resolve, reject) {
+        return new Promise(function(resolve, reject) {
           getUserMedia.call(navigator, constraints, resolve, reject);
         });
       };
     }
 
-    console.log("Requesting camera permissions...");
+    updateLoadingStatus("Requesting camera permissions...");
     const stream = await navigator.mediaDevices.getUserMedia({
       video: {
         facingMode: "user",
@@ -185,150 +193,131 @@ async function startCamera() {
       },
     });
 
-    console.log("Camera access granted, setting up video...");
-    sendToReactNative("success", "Camera access granted");
+    updateLoadingStatus("Camera access granted, setting up video...");
     video.srcObject = stream;
-    video.play(); // Explicitly start video playback
+    
+    video.onloadedmetadata = () => {
+      updateLoadingStatus("Video metadata loaded");
+    };
 
-    // Log video readiness state
-    console.log("Video readyState:", video.readyState);
-    sendToReactNative("info", `Video readyState: ${video.readyState}`);
-    console.log("Video dimensions:", video.videoWidth, video.videoHeight);
-    sendToReactNative("info", `Video dimensions: ${video.videoWidth}x${video.videoHeight}`);
+    video.onerror = (error) => {
+      updateLoadingStatus("Video error: " + error.message);
+      logError("Video error: " + error.message);
+    };
 
-    // Load models after camera access is granted
+    await video.play();
+    updateLoadingStatus("Video playback started");
+
     const faceapi = await loadModels();
-    console.log("loadModels completed.");
+    
+    updateDisplaySize();
+    window.addEventListener("resize", updateDisplaySize);
 
-    console.log("About to set up detection interval with delay...");
+    setInterval(async () => {
+      if (video.readyState < 4) return;
 
-    // Start face detection after a short delay, independent of video events
-    setTimeout(() => {
-      // Initial update of display size
-      updateDisplaySize();
+      try {
+        if (displaySize.width === 0 || displaySize.height === 0) {
+          updateDisplaySize();
+          return;
+        }
 
-      // Update display size on window resize
-      window.addEventListener("resize", updateDisplaySize);
+        const detections = await faceapi
+          .detectAllFaces(
+            video,
+            new faceapi.TinyFaceDetectorOptions({
+              inputSize: 416,
+              scoreThreshold: 0.3,
+            })
+          )
+          .withFaceLandmarks()
+          .withFaceDescriptors();
 
-      setInterval(async () => {
-        if (video.readyState < 4) return;
+        const resizedDetections = faceapi.resizeResults(detections, displaySize);
+        const ctx = canvas.getContext("2d");
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-        try {
-          if (displaySize.width === 0 || displaySize.height === 0) {
-            updateDisplaySize();
+        if (resizedDetections.length > MAX_FACES_ALLOWED) {
+          sendToReactNative("error", "Multiple faces detected. Please ensure only one face is visible.");
+          return;
+        }
+
+        if (resizedDetections.length > 0) {
+          const detection = resizedDetections[0];
+          const box = detection.detection.box;
+          const size = Math.max(box.width, box.height) * 1.2;
+          const centerX = box.x + box.width / 2;
+          const centerY = box.y + box.height / 2;
+
+          const qualityCheck = checkFaceQuality(detection);
+          if (!qualityCheck.isGood) {
+            sendToReactNative("error", qualityCheck.reason);
             return;
           }
 
-          const detections = await faceapi
-            .detectAllFaces(
-              video,
-              new faceapi.TinyFaceDetectorOptions({
-                inputSize: 416,
-                scoreThreshold: 0.3,
-              })
-            )
-            .withFaceLandmarks()
-            .withFaceDescriptors();
+          if (isRegistrationMode && registrationStartTime) {
+            const elapsedTime = Date.now() - registrationStartTime;
+            const progress = Math.min(elapsedTime / 3000, 1);
 
-          const resizedDetections = faceapi.resizeResults(detections, displaySize);
-          const ctx = canvas.getContext("2d");
-          ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-          // Check for multiple faces
-          if (resizedDetections.length > MAX_FACES_ALLOWED) {
-            sendToReactNative("error", "Multiple faces detected. Please ensure only one face is visible.");
-            return;
-          }
-
-          if (resizedDetections.length > 0) {
-            const detection = resizedDetections[0];
-            const box = detection.detection.box;
-            const size = Math.max(box.width, box.height) * 1.2;
-            const centerX = box.x + box.width / 2;
-            const centerY = box.y + box.height / 2;
-
-            // Check face quality
-            const qualityCheck = checkFaceQuality(detection);
-            if (!qualityCheck.isGood) {
-              sendToReactNative("error", qualityCheck.reason);
+            if (!checkLiveness(detection)) {
+              sendToReactNative("info", "Please move your face slightly to verify liveness");
               return;
             }
 
-            if (isRegistrationMode && registrationStartTime) {
-              const elapsedTime = Date.now() - registrationStartTime;
-              const progress = Math.min(elapsedTime / 3000, 1);
-
-              // Check liveness during registration
-              if (!checkLiveness(detection)) {
-                sendToReactNative("info", "Please move your face slightly to verify liveness");
-                return;
-              }
-
-              // Store quality scores
-              faceQualityScores.push(qualityCheck.score);
-              
-              drawScanningAnimation(ctx, centerX, centerY, size, progress);
-            } else {
-              ctx.beginPath();
-              ctx.arc(centerX, centerY, size / 2, 0, 2 * Math.PI);
-              ctx.strokeStyle = "rgba(0, 255, 255, 0.8)";
-              ctx.lineWidth = 2;
-              ctx.stroke();
-            }
-
-            const faceDescriptor = detection.descriptor;
-
-            if (isRegistrationMode) {
-              // Only register if we have enough good quality samples
-              if (faceQualityScores.length >= 5) {
-                const avgQuality = faceQualityScores.reduce((a, b) => a + b) / faceQualityScores.length;
-                if (avgQuality >= MIN_FACE_QUALITY_SCORE) {
-                  registerFace(faceDescriptor);
-                } else {
-                  sendToReactNative("error", "Face quality too low. Please try again in better lighting.");
-                  registrationStartTime = null;
-                  faceQualityScores = [];
-                }
-              }
-            } else if (isVerificationMode) {
-              verifyFace(faceDescriptor);
-            } else {
-              sendToReactNative("detection", "Face detected", {
-                descriptor: Array.from(faceDescriptor),
-                timestamp: Date.now(),
-                box: {
-                  x: box.x,
-                  y: box.y,
-                  width: box.width,
-                  height: box.height
-                }
-              });
-            }
-          } else if (isRegistrationMode && registrationStartTime) {
-            registrationStartTime = null;
-            faceQualityScores = [];
-            faceMovementCount = 0;
-            lastFacePosition = null;
-            sendToReactNative("error", "Face lost during registration. Please try again.");
+            faceQualityScores.push(qualityCheck.score);
+            
+            drawScanningAnimation(ctx, centerX, centerY, size, progress);
+          } else {
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, size / 2, 0, 2 * Math.PI);
+            ctx.strokeStyle = "rgba(0, 255, 255, 0.8)";
+            ctx.lineWidth = 2;
+            ctx.stroke();
           }
-        } catch (err) {
-          logError("Face detection error: " + err.message);
-          sendToReactNative("error", "Face detection error: " + err.message);
-        }
-      }, 200);
-    }, 500);
 
-    console.log("Camera access granted");
+          const faceDescriptor = detection.descriptor;
+
+          if (isRegistrationMode) {
+            if (faceQualityScores.length >= 5) {
+              const avgQuality = faceQualityScores.reduce((a, b) => a + b) / faceQualityScores.length;
+              if (avgQuality >= MIN_FACE_QUALITY_SCORE) {
+                registerFace(faceDescriptor);
+              } else {
+                sendToReactNative("error", "Face quality too low. Please try again in better lighting.");
+                registrationStartTime = null;
+                faceQualityScores = [];
+              }
+            }
+          } else if (isVerificationMode) {
+            verifyFace(faceDescriptor);
+          } else {
+            sendToReactNative("detection", "Face detected", {
+              descriptor: Array.from(faceDescriptor),
+              timestamp: Date.now(),
+              box: {
+                x: box.x,
+                y: box.y,
+                width: box.width,
+                height: box.height
+              }
+            });
+          }
+        } else if (isRegistrationMode && registrationStartTime) {
+          registrationStartTime = null;
+          faceQualityScores = [];
+          faceMovementCount = 0;
+          lastFacePosition = null;
+          sendToReactNative("error", "Face lost during registration. Please try again.");
+        }
+      } catch (err) {
+        logError("Face detection error: " + err.message);
+        sendToReactNative("error", "Face detection error: " + err.message);
+      }
+    }, 200);
+
   } catch (err) {
-    const errorMessage =
-      "Camera Error: " +
-      err.message +
-      "\n" +
-      "Name: " +
-      err.name +
-      "\n" +
-      "Stack: " +
-      err.stack;
+    const errorMessage = "Camera Error: " + err.message;
+    updateLoadingStatus(errorMessage);
     logError(errorMessage);
   }
 }

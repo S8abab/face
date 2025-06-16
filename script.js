@@ -10,6 +10,7 @@ let registrationStartTime = null;
 let lastFacePosition = null;
 let faceMovementCount = 0;
 let faceQualityScores = [];
+let registrationCompleted = false;
 
 // Constants for security checks
 const FACE_MOVEMENT_THRESHOLD = 30; // pixels
@@ -39,7 +40,7 @@ function logError(message) {
       window.ReactNativeWebView.postMessage(
         JSON.stringify({
           type: "error",
-          message: message
+          message: message,
         })
       );
     }
@@ -55,7 +56,7 @@ function sendToReactNative(type, message, data = null) {
       JSON.stringify({
         type: type,
         message: message,
-        data: data
+        data: data,
       })
     );
   }
@@ -91,7 +92,7 @@ function waitForFaceAPI() {
 }
 
 function updateLoadingStatus(message) {
-  const statusElement = document.querySelector('.loading-status');
+  const statusElement = document.querySelector(".loading-status");
   if (statusElement) {
     statusElement.textContent = message;
   }
@@ -103,10 +104,10 @@ async function loadModels() {
   try {
     updateLoadingStatus("Waiting for face-api.js...");
     const faceapi = await waitForFaceAPI();
-    
+
     updateLoadingStatus("Loading...");
     const MODEL_URL = "https://justadudewhohacks.github.io/face-api.js/models";
-    
+
     await Promise.all([
       faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
       faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
@@ -165,18 +166,19 @@ document.head.appendChild(style);
 async function startCamera() {
   try {
     updateLoadingStatus("Checking camera access...");
-    
+
     if (!navigator.mediaDevices) {
       navigator.mediaDevices = {};
     }
 
     if (!navigator.mediaDevices.getUserMedia) {
-      navigator.mediaDevices.getUserMedia = function(constraints) {
-        const getUserMedia = navigator.webkitGetUserMedia || navigator.mozGetUserMedia;
+      navigator.mediaDevices.getUserMedia = function (constraints) {
+        const getUserMedia =
+          navigator.webkitGetUserMedia || navigator.mozGetUserMedia;
         if (!getUserMedia) {
           throw new Error("getUserMedia is not implemented in this browser");
         }
-        return new Promise(function(resolve, reject) {
+        return new Promise(function (resolve, reject) {
           getUserMedia.call(navigator, constraints, resolve, reject);
         });
       };
@@ -194,7 +196,7 @@ async function startCamera() {
 
     updateLoadingStatus("Camera access granted, setting up video...");
     video.srcObject = stream;
-    
+
     video.onloadedmetadata = () => {
       updateLoadingStatus("Video metadata loaded");
     };
@@ -208,7 +210,7 @@ async function startCamera() {
     updateLoadingStatus("Video playback started");
 
     const faceapi = await loadModels();
-    
+
     updateDisplaySize();
     window.addEventListener("resize", updateDisplaySize);
 
@@ -232,12 +234,17 @@ async function startCamera() {
           .withFaceLandmarks()
           .withFaceDescriptors();
 
-        const resizedDetections = faceapi.resizeResults(detections, displaySize);
+        const resizedDetections = faceapi.resizeResults(
+          detections,
+          displaySize
+        );
         const ctx = canvas.getContext("2d");
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
         if (resizedDetections.length > MAX_FACES_ALLOWED) {
-          sendToReactNative("error", "Multiple faces detected. Please ensure only one face is visible.");
+          updateInstruction(
+            "Multiple faces detected. Please ensure only one face is visible."
+          );
           return;
         }
 
@@ -248,11 +255,35 @@ async function startCamera() {
           const centerX = box.x + box.width / 2;
           const centerY = box.y + box.height / 2;
 
+          // Check if face is centered
+          const centerFrame = document.getElementById("center-frame");
+          const frameRect = centerFrame.getBoundingClientRect();
+          const isCentered =
+            Math.abs(centerX - frameRect.left - frameRect.width / 2) < 50 &&
+            Math.abs(centerY - frameRect.top - frameRect.height / 2) < 50;
+
+          if (isRegistrationMode) {
+            if (!isCentered) {
+              updateInstruction("Move your face to the center circle");
+              registrationStartTime = null;
+              updateCountdown("");
+            } else if (!registrationStartTime) {
+              registrationStartTime = Date.now();
+              updateInstruction("Keep your face still");
+              updateCountdown(3);
+            }
+          }
+
           if (isRegistrationMode && registrationStartTime) {
-            const elapsedTime = Date.now() - registrationStartTime;
+            const currentTime = Date.now();
+            const elapsedTime = currentTime - registrationStartTime;
             const progress = Math.min(elapsedTime / 3000, 1);
-            
+
             drawScanningAnimation(ctx, centerX, centerY, size, progress);
+
+            if (elapsedTime >= 3000) {
+              registerFace(detection.descriptor);
+            }
           } else {
             ctx.beginPath();
             ctx.arc(centerX, centerY, size / 2, 0, 2 * Math.PI);
@@ -263,13 +294,9 @@ async function startCamera() {
 
           const faceDescriptor = detection.descriptor;
 
-          if (isRegistrationMode) {
-            if (elapsedTime >= 3000) {
-              registerFace(faceDescriptor);
-            }
-          } else if (isVerificationMode) {
+          if (isVerificationMode) {
             verifyFace(faceDescriptor);
-          } else {
+          } else if (!isRegistrationMode) {
             sendToReactNative("detection", "Face detected", {
               descriptor: Array.from(faceDescriptor),
               timestamp: Date.now(),
@@ -277,20 +304,22 @@ async function startCamera() {
                 x: box.x,
                 y: box.y,
                 width: box.width,
-                height: box.height
-              }
+                height: box.height,
+              },
             });
           }
-        } else if (isRegistrationMode && registrationStartTime) {
+        } else if (isRegistrationMode) {
+          updateInstruction(
+            "No face detected. Please position your face in the center circle"
+          );
           registrationStartTime = null;
-          sendToReactNative("error", "Face lost during registration. Please try again.");
+          updateCountdown("");
         }
       } catch (err) {
         logError("Face detection error: " + err.message);
         sendToReactNative("error", "Face detection error: " + err.message);
       }
     }, 200);
-
   } catch (err) {
     const errorMessage = "Camera Error: " + err.message;
     updateLoadingStatus(errorMessage);
@@ -312,7 +341,7 @@ function drawScanningAnimation(ctx, centerX, centerY, size, progress) {
   // Draw outer ring
   ctx.beginPath();
   ctx.arc(centerX, centerY, size / 2, 0, 2 * Math.PI);
-  ctx.strokeStyle = 'rgba(0, 255, 255, 0.3)';
+  ctx.strokeStyle = "rgba(0, 255, 255, 0.3)";
   ctx.lineWidth = 3;
   ctx.stroke();
 
@@ -322,7 +351,7 @@ function drawScanningAnimation(ctx, centerX, centerY, size, progress) {
     const ringProgress = (progress + i / numRings) % 1;
     const ringSize = size * (0.8 + ringProgress * 0.4);
     const opacity = 1 - ringProgress;
-    
+
     ctx.beginPath();
     ctx.arc(centerX, centerY, ringSize / 2, 0, 2 * Math.PI);
     ctx.strokeStyle = `rgba(0, 255, 255, ${opacity * 0.5})`;
@@ -332,11 +361,11 @@ function drawScanningAnimation(ctx, centerX, centerY, size, progress) {
 
   // Draw progress arc
   const startAngle = -Math.PI / 2;
-  const endAngle = startAngle + (2 * Math.PI * progress);
-  
+  const endAngle = startAngle + 2 * Math.PI * progress;
+
   ctx.beginPath();
   ctx.arc(centerX, centerY, size / 2, startAngle, endAngle);
-  ctx.strokeStyle = 'rgba(0, 255, 255, 0.8)';
+  ctx.strokeStyle = "rgba(0, 255, 255, 0.8)";
   ctx.lineWidth = 4;
   ctx.stroke();
 
@@ -346,50 +375,100 @@ function drawScanningAnimation(ctx, centerX, centerY, size, progress) {
     const angle = (i / numDots) * 2 * Math.PI;
     const dotX = centerX + Math.cos(angle) * (size / 2);
     const dotY = centerY + Math.sin(angle) * (size / 2);
-    
+
     ctx.beginPath();
     ctx.arc(dotX, dotY, 3, 0, 2 * Math.PI);
-    ctx.fillStyle = 'rgba(0, 255, 255, 0.8)';
+    ctx.fillStyle = "rgba(0, 255, 255, 0.8)";
     ctx.fill();
   }
 
   // Draw center dot
   ctx.beginPath();
   ctx.arc(centerX, centerY, 4, 0, 2 * Math.PI);
-  ctx.fillStyle = 'rgba(0, 255, 255, 1)';
+  ctx.fillStyle = "rgba(0, 255, 255, 1)";
   ctx.fill();
 }
 
-// Add function to handle face registration
+// Modify registerFace function
 function registerFace(faceDescriptor) {
   if (!registrationStartTime) {
     registrationStartTime = Date.now();
-    sendToReactNative("info", "Starting face registration... Hold still for 3 seconds");
+    updateInstruction("Keep your face still");
+    updateCountdown(3);
     return;
   }
 
-  const elapsedTime = Date.now() - registrationStartTime;
+  const currentTime = Date.now();
+  const elapsedTime = currentTime - registrationStartTime;
+  const progress = Math.min(elapsedTime / 3000, 1);
+
+  // Update progress bar
+  const progressBar = document.querySelector("#registration-progress");
+  if (progressBar) {
+    progressBar.style.setProperty("--progress", `${progress * 100}%`);
+  }
+
   if (elapsedTime < 3000) {
     // Still counting down
     const remainingTime = Math.ceil((3000 - elapsedTime) / 1000);
-    sendToReactNative("info", `Hold still... ${remainingTime} seconds remaining`);
+    updateCountdown(remainingTime);
     return;
   }
 
-  // Registration complete
-  if (window.ReactNativeWebView) {
-    window.ReactNativeWebView.postMessage(
-      JSON.stringify({
-        type: "register_face",
-        data: {
-          descriptor: Array.from(faceDescriptor),
-          timestamp: Date.now()
-        }
-      })
-    );
+  // Only send descriptor if registration hasn't been completed yet
+  if (!registrationCompleted) {
+    registrationCompleted = true;
+
+    // Send the descriptor to React Native
+    if (window.ReactNativeWebView) {
+      window.ReactNativeWebView.postMessage(
+        JSON.stringify({
+          type: "register_face",
+          data: {
+            descriptor: Array.from(faceDescriptor),
+            timestamp: Date.now(),
+          },
+        })
+      );
+    }
+
+    // Hide instructions and reset
+    const instructions = document.getElementById("instructions");
+    const centerFrame = document.getElementById("center-frame");
+    instructions.classList.add("hidden");
+    centerFrame.classList.remove("active");
+    registrationStartTime = null;
+    setOperationMode(null);
+    updateCountdown("");
+    console.log("Face registration completed and descriptor sent");
+    sendToReactNative("success", "Face registration completed!");
   }
-  registrationStartTime = null;
-  sendToReactNative("success", "Face registration completed!");
+}
+
+// Modify the registration button click handler
+document.getElementById("register-btn").addEventListener("click", () => {
+  const instructions = document.getElementById("instructions");
+  const centerFrame = document.getElementById("center-frame");
+  instructions.classList.remove("hidden");
+  centerFrame.classList.add("active");
+  setOperationMode("register");
+  registrationCompleted = false; // Reset the completion flag
+  updateInstruction("Position your face in the center circle");
+  sendToReactNative("info", "Starting face registration process");
+});
+
+function updateInstruction(message) {
+  const instructionElement = document.getElementById("current-instruction");
+  if (instructionElement) {
+    instructionElement.textContent = message;
+  }
+}
+
+function updateCountdown(seconds) {
+  const countdownElement = document.getElementById("countdown");
+  if (countdownElement) {
+    countdownElement.textContent = seconds > 0 ? `${seconds}s` : "";
+  }
 }
 
 // Add function to handle face verification
@@ -400,8 +479,8 @@ function verifyFace(faceDescriptor) {
         type: "verify_face",
         data: {
           descriptor: Array.from(faceDescriptor),
-          timestamp: Date.now()
-        }
+          timestamp: Date.now(),
+        },
       })
     );
   }
@@ -409,8 +488,8 @@ function verifyFace(faceDescriptor) {
 
 // Add function to set operation mode
 function setOperationMode(mode) {
-  isRegistrationMode = mode === 'register';
-  isVerificationMode = mode === 'verify';
+  isRegistrationMode = mode === "register";
+  isVerificationMode = mode === "verify";
   registrationStartTime = null;
   sendToReactNative("info", `Mode set to: ${mode}`);
 }
@@ -423,5 +502,5 @@ function receiveStoredFaceDescriptor(descriptor) {
 // Expose functions to React Native
 window.faceDetection = {
   setOperationMode,
-  receiveStoredFaceDescriptor
+  receiveStoredFaceDescriptor,
 };

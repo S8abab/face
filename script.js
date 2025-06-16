@@ -19,8 +19,29 @@ function logError(message) {
   if (message && message.trim() !== "") {
     errorDiv.textContent = message;
     errorDiv.style.display = "block";
+    // Send error to React Native
+    if (window.ReactNativeWebView) {
+      window.ReactNativeWebView.postMessage(
+        JSON.stringify({
+          type: "error",
+          message: message
+        })
+      );
+    }
   } else {
     errorDiv.style.display = "none";
+  }
+}
+
+// Add logging functions for different event types
+function sendToReactNative(type, message) {
+  if (window.ReactNativeWebView) {
+    window.ReactNativeWebView.postMessage(
+      JSON.stringify({
+        type: type,
+        message: message
+      })
+    );
   }
 }
 
@@ -116,6 +137,7 @@ document.head.appendChild(style);
 async function startCamera() {
   try {
     console.log("Checking mediaDevices support...");
+    sendToReactNative("info", "Checking mediaDevices support...");
     if (!navigator.mediaDevices) {
       navigator.mediaDevices = {};
     }
@@ -148,12 +170,15 @@ async function startCamera() {
     });
 
     console.log("Camera access granted, setting up video...");
+    sendToReactNative("success", "Camera access granted");
     video.srcObject = stream;
     video.play(); // Explicitly start video playback
 
     // Log video readiness state
     console.log("Video readyState:", video.readyState);
+    sendToReactNative("info", `Video readyState: ${video.readyState}`);
     console.log("Video dimensions:", video.videoWidth, video.videoHeight);
+    sendToReactNative("info", `Video dimensions: ${video.videoWidth}x${video.videoHeight}`);
 
     // Load models after camera access is granted
     const faceapi = await loadModels();
@@ -218,21 +243,34 @@ async function startCamera() {
 
             // Send face descriptor to React Native
             const faceDescriptor = resizedDetections[0].descriptor;
+            console.log(faceDescriptor);
+            
+            // Send detection event
             if (window.ReactNativeWebView) {
-            console.log(faceDescriptor)
+              // Send detection event with face data
               window.ReactNativeWebView.postMessage(
                 JSON.stringify({
-                  type: "FACE_DETECTED",
+                  type: "detection",
                   data: {
-                    descriptor: Array.from(faceDescriptor), // Convert Float32Array to regular array
+                    descriptor: Array.from(faceDescriptor),
                     timestamp: Date.now(),
-                  },
+                    box: {
+                      x: box.x,
+                      y: box.y,
+                      width: box.width,
+                      height: box.height
+                    }
+                  }
                 })
               );
+              
+              // Send success message
+              sendToReactNative("success", "Face detected successfully");
             }
           }
         } catch (err) {
           logError("Face detection error: " + err.message);
+          sendToReactNative("error", "Face detection error: " + err.message);
         }
       }, 200);
     }, 500);

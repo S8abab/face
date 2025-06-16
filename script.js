@@ -13,7 +13,6 @@ let faceQualityScores = [];
 
 // Constants for security checks
 const FACE_MOVEMENT_THRESHOLD = 30; // pixels
-const MIN_FACE_QUALITY_SCORE = 0.6;
 const MIN_FACE_SIZE = 100; // minimum face size in pixels
 const MAX_FACES_ALLOWED = 1;
 const MIN_CONFIDENCE_SCORE = 0.7;
@@ -249,22 +248,9 @@ async function startCamera() {
           const centerX = box.x + box.width / 2;
           const centerY = box.y + box.height / 2;
 
-          const qualityCheck = checkFaceQuality(detection);
-          if (!qualityCheck.isGood) {
-            sendToReactNative("error", qualityCheck.reason);
-            return;
-          }
-
           if (isRegistrationMode && registrationStartTime) {
             const elapsedTime = Date.now() - registrationStartTime;
             const progress = Math.min(elapsedTime / 3000, 1);
-
-            if (!checkLiveness(detection)) {
-              sendToReactNative("info", "Please move your face slightly to verify liveness");
-              return;
-            }
-
-            faceQualityScores.push(qualityCheck.score);
             
             drawScanningAnimation(ctx, centerX, centerY, size, progress);
           } else {
@@ -278,15 +264,8 @@ async function startCamera() {
           const faceDescriptor = detection.descriptor;
 
           if (isRegistrationMode) {
-            if (faceQualityScores.length >= 5) {
-              const avgQuality = faceQualityScores.reduce((a, b) => a + b) / faceQualityScores.length;
-              if (avgQuality >= MIN_FACE_QUALITY_SCORE) {
-                registerFace(faceDescriptor);
-              } else {
-                sendToReactNative("error", "Face quality too low. Please try again in better lighting.");
-                registrationStartTime = null;
-                faceQualityScores = [];
-              }
+            if (elapsedTime >= 3000) {
+              registerFace(faceDescriptor);
             }
           } else if (isVerificationMode) {
             verifyFace(faceDescriptor);
@@ -304,9 +283,6 @@ async function startCamera() {
           }
         } else if (isRegistrationMode && registrationStartTime) {
           registrationStartTime = null;
-          faceQualityScores = [];
-          faceMovementCount = 0;
-          lastFacePosition = null;
           sendToReactNative("error", "Face lost during registration. Please try again.");
         }
       } catch (err) {
@@ -436,9 +412,6 @@ function setOperationMode(mode) {
   isRegistrationMode = mode === 'register';
   isVerificationMode = mode === 'verify';
   registrationStartTime = null;
-  faceQualityScores = [];
-  faceMovementCount = 0;
-  lastFacePosition = null;
   sendToReactNative("info", `Mode set to: ${mode}`);
 }
 
@@ -452,65 +425,3 @@ window.faceDetection = {
   setOperationMode,
   receiveStoredFaceDescriptor
 };
-
-function checkFaceQuality(detection) {
-  const score = detection.detection.score;
-  const box = detection.detection.box;
-  
-  // Check face size
-  if (box.width < MIN_FACE_SIZE || box.height < MIN_FACE_SIZE) {
-    return {
-      isGood: false,
-      reason: "Face too small. Please move closer to the camera."
-    };
-  }
-
-  // Check detection confidence
-  if (score < MIN_CONFIDENCE_SCORE) {
-    return {
-      isGood: false,
-      reason: "Low confidence in face detection. Please ensure good lighting."
-    };
-  }
-
-  // Check face landmarks for proper alignment
-  const landmarks = detection.landmarks.positions;
-  const leftEye = landmarks[36];
-  const rightEye = landmarks[45];
-  const nose = landmarks[30];
-  
-  // Check if eyes are roughly horizontal
-  const eyeAngle = Math.abs(Math.atan2(rightEye.y - leftEye.y, rightEye.x - leftEye.x));
-  if (eyeAngle > 0.2) { // about 11 degrees
-    return {
-      isGood: false,
-      reason: "Please look straight at the camera."
-    };
-  }
-
-  return {
-    isGood: true,
-    score: score
-  };
-}
-
-function checkLiveness(detection) {
-  const currentPosition = {
-    x: detection.detection.box.x,
-    y: detection.detection.box.y
-  };
-
-  if (lastFacePosition) {
-    const movement = Math.sqrt(
-      Math.pow(currentPosition.x - lastFacePosition.x, 2) +
-      Math.pow(currentPosition.y - lastFacePosition.y, 2)
-    );
-
-    if (movement > FACE_MOVEMENT_THRESHOLD) {
-      faceMovementCount++;
-    }
-  }
-
-  lastFacePosition = currentPosition;
-  return faceMovementCount >= 2; // Require at least 2 movements for liveness
-}

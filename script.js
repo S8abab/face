@@ -5,6 +5,18 @@ let displaySize = { width: 0, height: 0 };
 let isRegistrationMode = false;
 let isVerificationMode = false;
 let storedFaceDescriptor = null;
+let registrationTimer = null;
+let registrationStartTime = null;
+let lastFacePosition = null;
+let faceMovementCount = 0;
+let faceQualityScores = [];
+
+// Constants for security checks
+const FACE_MOVEMENT_THRESHOLD = 30; // pixels
+const MIN_FACE_QUALITY_SCORE = 0.6;
+const MIN_FACE_SIZE = 100; // minimum face size in pixels
+const MAX_FACES_ALLOWED = 1;
+const MIN_CONFIDENCE_SCORE = 0.7;
 
 // Add loading screen element
 const loadingScreen = document.createElement("div");
@@ -199,10 +211,7 @@ async function startCamera() {
       window.addEventListener("resize", updateDisplaySize);
 
       setInterval(async () => {
-        // Check if video is ready before processing
-        if (video.readyState < 4) {
-          return;
-        }
+        if (video.readyState < 4) return;
 
         try {
           if (displaySize.width === 0 || displaySize.height === 0) {
@@ -221,40 +230,69 @@ async function startCamera() {
             .withFaceLandmarks()
             .withFaceDescriptors();
 
-          // Resize detections to match display size
-          const resizedDetections = faceapi.resizeResults(
-            detections,
-            displaySize
-          );
-
-          // Clear canvas
+          const resizedDetections = faceapi.resizeResults(detections, displaySize);
           const ctx = canvas.getContext("2d");
           ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-          // Draw circle when face is detected and emit descriptor
+          // Check for multiple faces
+          if (resizedDetections.length > MAX_FACES_ALLOWED) {
+            sendToReactNative("error", "Multiple faces detected. Please ensure only one face is visible.");
+            return;
+          }
+
           if (resizedDetections.length > 0) {
-            const box = resizedDetections[0].detection.box;
+            const detection = resizedDetections[0];
+            const box = detection.detection.box;
             const size = Math.max(box.width, box.height) * 1.2;
             const centerX = box.x + box.width / 2;
             const centerY = box.y + box.height / 2;
 
-            // Draw circle
-            ctx.beginPath();
-            ctx.arc(centerX, centerY, size / 2, 0, 2 * Math.PI);
-            ctx.strokeStyle = "#00ff00";
-            ctx.lineWidth = 2;
-            ctx.stroke();
+            // Check face quality
+            const qualityCheck = checkFaceQuality(detection);
+            if (!qualityCheck.isGood) {
+              sendToReactNative("error", qualityCheck.reason);
+              return;
+            }
 
-            const faceDescriptor = resizedDetections[0].descriptor;
+            if (isRegistrationMode && registrationStartTime) {
+              const elapsedTime = Date.now() - registrationStartTime;
+              const progress = Math.min(elapsedTime / 3000, 1);
+
+              // Check liveness during registration
+              if (!checkLiveness(detection)) {
+                sendToReactNative("info", "Please move your face slightly to verify liveness");
+                return;
+              }
+
+              // Store quality scores
+              faceQualityScores.push(qualityCheck.score);
+              
+              drawScanningAnimation(ctx, centerX, centerY, size, progress);
+            } else {
+              ctx.beginPath();
+              ctx.arc(centerX, centerY, size / 2, 0, 2 * Math.PI);
+              ctx.strokeStyle = "rgba(0, 255, 255, 0.8)";
+              ctx.lineWidth = 2;
+              ctx.stroke();
+            }
+
+            const faceDescriptor = detection.descriptor;
 
             if (isRegistrationMode) {
-              registerFace(faceDescriptor);
-              sendToReactNative("success", "Face registered successfully");
+              // Only register if we have enough good quality samples
+              if (faceQualityScores.length >= 5) {
+                const avgQuality = faceQualityScores.reduce((a, b) => a + b) / faceQualityScores.length;
+                if (avgQuality >= MIN_FACE_QUALITY_SCORE) {
+                  registerFace(faceDescriptor);
+                } else {
+                  sendToReactNative("error", "Face quality too low. Please try again in better lighting.");
+                  registrationStartTime = null;
+                  faceQualityScores = [];
+                }
+              }
             } else if (isVerificationMode) {
               verifyFace(faceDescriptor);
-              sendToReactNative("success", "Face verification completed");
             } else {
-              // Default detection mode
               sendToReactNative("detection", "Face detected", {
                 descriptor: Array.from(faceDescriptor),
                 timestamp: Date.now(),
@@ -266,6 +304,12 @@ async function startCamera() {
                 }
               });
             }
+          } else if (isRegistrationMode && registrationStartTime) {
+            registrationStartTime = null;
+            faceQualityScores = [];
+            faceMovementCount = 0;
+            lastFacePosition = null;
+            sendToReactNative("error", "Face lost during registration. Please try again.");
           }
         } catch (err) {
           logError("Face detection error: " + err.message);
@@ -296,8 +340,78 @@ if (document.readyState === "complete") {
   window.addEventListener("load", startCamera);
 }
 
+function drawScanningAnimation(ctx, centerX, centerY, size, progress) {
+  // Clear previous drawings
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Draw outer ring
+  ctx.beginPath();
+  ctx.arc(centerX, centerY, size / 2, 0, 2 * Math.PI);
+  ctx.strokeStyle = 'rgba(0, 255, 255, 0.3)';
+  ctx.lineWidth = 3;
+  ctx.stroke();
+
+  // Draw scanning rings
+  const numRings = 3;
+  for (let i = 0; i < numRings; i++) {
+    const ringProgress = (progress + i / numRings) % 1;
+    const ringSize = size * (0.8 + ringProgress * 0.4);
+    const opacity = 1 - ringProgress;
+    
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, ringSize / 2, 0, 2 * Math.PI);
+    ctx.strokeStyle = `rgba(0, 255, 255, ${opacity * 0.5})`;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
+
+  // Draw progress arc
+  const startAngle = -Math.PI / 2;
+  const endAngle = startAngle + (2 * Math.PI * progress);
+  
+  ctx.beginPath();
+  ctx.arc(centerX, centerY, size / 2, startAngle, endAngle);
+  ctx.strokeStyle = 'rgba(0, 255, 255, 0.8)';
+  ctx.lineWidth = 4;
+  ctx.stroke();
+
+  // Draw scanning dots
+  const numDots = 8;
+  for (let i = 0; i < numDots; i++) {
+    const angle = (i / numDots) * 2 * Math.PI;
+    const dotX = centerX + Math.cos(angle) * (size / 2);
+    const dotY = centerY + Math.sin(angle) * (size / 2);
+    
+    ctx.beginPath();
+    ctx.arc(dotX, dotY, 3, 0, 2 * Math.PI);
+    ctx.fillStyle = 'rgba(0, 255, 255, 0.8)';
+    ctx.fill();
+  }
+
+  // Draw center dot
+  ctx.beginPath();
+  ctx.arc(centerX, centerY, 4, 0, 2 * Math.PI);
+  ctx.fillStyle = 'rgba(0, 255, 255, 1)';
+  ctx.fill();
+}
+
 // Add function to handle face registration
 function registerFace(faceDescriptor) {
+  if (!registrationStartTime) {
+    registrationStartTime = Date.now();
+    sendToReactNative("info", "Starting face registration... Hold still for 3 seconds");
+    return;
+  }
+
+  const elapsedTime = Date.now() - registrationStartTime;
+  if (elapsedTime < 3000) {
+    // Still counting down
+    const remainingTime = Math.ceil((3000 - elapsedTime) / 1000);
+    sendToReactNative("info", `Hold still... ${remainingTime} seconds remaining`);
+    return;
+  }
+
+  // Registration complete
   if (window.ReactNativeWebView) {
     window.ReactNativeWebView.postMessage(
       JSON.stringify({
@@ -309,6 +423,8 @@ function registerFace(faceDescriptor) {
       })
     );
   }
+  registrationStartTime = null;
+  sendToReactNative("success", "Face registration completed!");
 }
 
 // Add function to handle face verification
@@ -330,6 +446,10 @@ function verifyFace(faceDescriptor) {
 function setOperationMode(mode) {
   isRegistrationMode = mode === 'register';
   isVerificationMode = mode === 'verify';
+  registrationStartTime = null;
+  faceQualityScores = [];
+  faceMovementCount = 0;
+  lastFacePosition = null;
   sendToReactNative("info", `Mode set to: ${mode}`);
 }
 
@@ -343,3 +463,65 @@ window.faceDetection = {
   setOperationMode,
   receiveStoredFaceDescriptor
 };
+
+function checkFaceQuality(detection) {
+  const score = detection.detection.score;
+  const box = detection.detection.box;
+  
+  // Check face size
+  if (box.width < MIN_FACE_SIZE || box.height < MIN_FACE_SIZE) {
+    return {
+      isGood: false,
+      reason: "Face too small. Please move closer to the camera."
+    };
+  }
+
+  // Check detection confidence
+  if (score < MIN_CONFIDENCE_SCORE) {
+    return {
+      isGood: false,
+      reason: "Low confidence in face detection. Please ensure good lighting."
+    };
+  }
+
+  // Check face landmarks for proper alignment
+  const landmarks = detection.landmarks.positions;
+  const leftEye = landmarks[36];
+  const rightEye = landmarks[45];
+  const nose = landmarks[30];
+  
+  // Check if eyes are roughly horizontal
+  const eyeAngle = Math.abs(Math.atan2(rightEye.y - leftEye.y, rightEye.x - leftEye.x));
+  if (eyeAngle > 0.2) { // about 11 degrees
+    return {
+      isGood: false,
+      reason: "Please look straight at the camera."
+    };
+  }
+
+  return {
+    isGood: true,
+    score: score
+  };
+}
+
+function checkLiveness(detection) {
+  const currentPosition = {
+    x: detection.detection.box.x,
+    y: detection.detection.box.y
+  };
+
+  if (lastFacePosition) {
+    const movement = Math.sqrt(
+      Math.pow(currentPosition.x - lastFacePosition.x, 2) +
+      Math.pow(currentPosition.y - lastFacePosition.y, 2)
+    );
+
+    if (movement > FACE_MOVEMENT_THRESHOLD) {
+      faceMovementCount++;
+    }
+  }
+
+  lastFacePosition = currentPosition;
+  return faceMovementCount >= 2; // Require at least 2 movements for liveness
+}

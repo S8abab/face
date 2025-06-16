@@ -2,6 +2,9 @@ const video = document.getElementById("video");
 const errorDiv = document.getElementById("error");
 const canvas = document.getElementById("overlay");
 let displaySize = { width: 0, height: 0 };
+let isRegistrationMode = false;
+let isVerificationMode = false;
+let storedFaceDescriptor = null;
 
 // Add loading screen element
 const loadingScreen = document.createElement("div");
@@ -34,12 +37,13 @@ function logError(message) {
 }
 
 // Add logging functions for different event types
-function sendToReactNative(type, message) {
+function sendToReactNative(type, message, data = null) {
   if (window.ReactNativeWebView) {
     window.ReactNativeWebView.postMessage(
       JSON.stringify({
         type: type,
-        message: message
+        message: message,
+        data: data
       })
     );
   }
@@ -241,31 +245,26 @@ async function startCamera() {
             ctx.lineWidth = 2;
             ctx.stroke();
 
-            // Send face descriptor to React Native
             const faceDescriptor = resizedDetections[0].descriptor;
-            console.log(faceDescriptor);
-            
-            // Send detection event
-            if (window.ReactNativeWebView) {
-              // Send detection event with face data
-              window.ReactNativeWebView.postMessage(
-                JSON.stringify({
-                  type: "detection",
-                  data: {
-                    descriptor: Array.from(faceDescriptor),
-                    timestamp: Date.now(),
-                    box: {
-                      x: box.x,
-                      y: box.y,
-                      width: box.width,
-                      height: box.height
-                    }
-                  }
-                })
-              );
-              
-              // Send success message
-              sendToReactNative("success", "Face detected successfully");
+
+            if (isRegistrationMode) {
+              registerFace(faceDescriptor);
+              sendToReactNative("success", "Face registered successfully");
+            } else if (isVerificationMode) {
+              verifyFace(faceDescriptor);
+              sendToReactNative("success", "Face verification completed");
+            } else {
+              // Default detection mode
+              sendToReactNative("detection", "Face detected", {
+                descriptor: Array.from(faceDescriptor),
+                timestamp: Date.now(),
+                box: {
+                  x: box.x,
+                  y: box.y,
+                  width: box.width,
+                  height: box.height
+                }
+              });
             }
           }
         } catch (err) {
@@ -296,3 +295,51 @@ if (document.readyState === "complete") {
 } else {
   window.addEventListener("load", startCamera);
 }
+
+// Add function to handle face registration
+function registerFace(faceDescriptor) {
+  if (window.ReactNativeWebView) {
+    window.ReactNativeWebView.postMessage(
+      JSON.stringify({
+        type: "register_face",
+        data: {
+          descriptor: Array.from(faceDescriptor),
+          timestamp: Date.now()
+        }
+      })
+    );
+  }
+}
+
+// Add function to handle face verification
+function verifyFace(faceDescriptor) {
+  if (window.ReactNativeWebView) {
+    window.ReactNativeWebView.postMessage(
+      JSON.stringify({
+        type: "verify_face",
+        data: {
+          descriptor: Array.from(faceDescriptor),
+          timestamp: Date.now()
+        }
+      })
+    );
+  }
+}
+
+// Add function to set operation mode
+function setOperationMode(mode) {
+  isRegistrationMode = mode === 'register';
+  isVerificationMode = mode === 'verify';
+  sendToReactNative("info", `Mode set to: ${mode}`);
+}
+
+// Add function to receive stored face descriptor from React Native
+function receiveStoredFaceDescriptor(descriptor) {
+  storedFaceDescriptor = new Float32Array(descriptor);
+}
+
+// Expose functions to React Native
+window.faceDetection = {
+  setOperationMode,
+  receiveStoredFaceDescriptor
+};

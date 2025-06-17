@@ -214,6 +214,12 @@ async function startCamera() {
     updateDisplaySize();
     window.addEventListener("resize", updateDisplaySize);
 
+    // Set initial mode to verification
+    setOperationMode("verify");
+
+    // Initialize UI in default mode
+    updateUIForMode("verify");
+
     setInterval(async () => {
       if (video.readyState < 4) return;
 
@@ -433,14 +439,8 @@ function registerFace(faceDescriptor) {
     }
 
     // Hide instructions and reset
-    const instructions = document.getElementById("instructions");
-    const centerFrame = document.getElementById("center-frame");
-    const registerBtn = document.getElementById("register-btn"); // Get the button
-    instructions.classList.add("hidden");
-    centerFrame.classList.remove("active");
-    registerBtn.style.display = "block"; // Show the button again
     registrationStartTime = null;
-    setOperationMode(null);
+    setOperationMode("verify");
     updateCountdown("");
     console.log("Face registration completed and descriptor sent");
     sendToReactNative("success", "Face registration completed!");
@@ -449,15 +449,8 @@ function registerFace(faceDescriptor) {
 
 // Modify the registration button click handler
 document.getElementById("register-btn").addEventListener("click", () => {
-  const instructions = document.getElementById("instructions");
-  const centerFrame = document.getElementById("center-frame");
-  const registerBtn = document.getElementById("register-btn"); // Get the button
-  registerBtn.style.display = "none"; // Hide the button
-  instructions.classList.remove("hidden");
-  centerFrame.classList.add("active");
   setOperationMode("register");
   registrationCompleted = false; // Reset the completion flag
-  updateInstruction("Position your face in the center circle");
   sendToReactNative("info", "Starting face registration process");
 });
 
@@ -495,7 +488,41 @@ function setOperationMode(mode) {
   isRegistrationMode = mode === "register";
   isVerificationMode = mode === "verify";
   registrationStartTime = null;
+  
+  // Update UI based on mode
+  updateUIForMode(mode);
+  
   sendToReactNative("info", `Mode set to: ${mode}`);
+}
+
+// Add function to update UI based on current mode
+function updateUIForMode(mode) {
+  const instructions = document.getElementById("instructions");
+  const centerFrame = document.getElementById("center-frame");
+  const registerBtn = document.getElementById("register-btn");
+  
+  if (mode === "register") {
+    // Show registration UI
+    registerBtn.style.display = "none";
+    instructions.classList.remove("hidden");
+    centerFrame.classList.add("active");
+    updateInstruction("Position your face in the center circle");
+  } else if (mode === "verify") {
+    // Verification mode - hide registration UI and register button
+    registerBtn.style.display = "none";
+    instructions.classList.add("hidden");
+    centerFrame.classList.remove("active");
+    updateInstruction("");
+    updateCountdown("");
+  } else {
+    // Default mode - show only the register button
+    registerBtn.style.display = "block";
+    registerBtn.textContent = "Scan Face";
+    instructions.classList.add("hidden");
+    centerFrame.classList.remove("active");
+    updateInstruction("");
+    updateCountdown("");
+  }
 }
 
 // Add function to receive stored face descriptor from React Native

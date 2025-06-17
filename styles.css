@@ -181,7 +181,7 @@ canvas {
 
 #registration-container {
     position: absolute;
-    bottom: 20px;
+    top: 20px;
     left: 50%;
     transform: translateX(-50%);
     text-align: center;
@@ -204,6 +204,13 @@ canvas {
     background-color: rgb(45, 147, 240);
     transform: translateY(-2px);
     box-shadow: 0 4px 8px rgba(60, 162, 255, 0.4);
+}
+
+#register-btn:active {
+    background-color: rgb(30, 132, 225);
+    transform: translateY(0px);
+    box-shadow: 0 1px 3px rgba(60, 162, 255, 0.3);
+    transition: all 0.1s ease;
 }
 
 #instructions {
@@ -263,9 +270,9 @@ canvas {
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
-    width: 95vmin;
-    height: 95vmin;
-    border: 4px dashed rgba(255, 255, 255, 0.7);
+    width: 75vmin;
+    height: 75vmin;
+    border: 4px dashed rgba(255, 255, 255, 0.5);
     border-radius: 50%;
     pointer-events: none;
     display: none;

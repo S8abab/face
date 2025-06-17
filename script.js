@@ -435,8 +435,10 @@ function registerFace(faceDescriptor) {
     // Hide instructions and reset
     const instructions = document.getElementById("instructions");
     const centerFrame = document.getElementById("center-frame");
+    const registerBtn = document.getElementById("register-btn"); // Get the button
     instructions.classList.add("hidden");
     centerFrame.classList.remove("active");
+    registerBtn.style.display = "block"; // Show the button again
     registrationStartTime = null;
     setOperationMode(null);
     updateCountdown("");
@@ -449,6 +451,8 @@ function registerFace(faceDescriptor) {
 document.getElementById("register-btn").addEventListener("click", () => {
   const instructions = document.getElementById("instructions");
   const centerFrame = document.getElementById("center-frame");
+  const registerBtn = document.getElementById("register-btn"); // Get the button
+  registerBtn.style.display = "none"; // Hide the button
   instructions.classList.remove("hidden");
   centerFrame.classList.add("active");
   setOperationMode("register");

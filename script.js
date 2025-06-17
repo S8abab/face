@@ -470,17 +470,93 @@ function updateCountdown(seconds) {
 
 // Add function to handle face verification
 function verifyFace(faceDescriptor) {
-  if (window.ReactNativeWebView) {
-    window.ReactNativeWebView.postMessage(
-      JSON.stringify({
-        type: "verify_face",
-        data: {
-          descriptor: Array.from(faceDescriptor),
-          timestamp: Date.now(),
-        },
-      })
-    );
+  if (!storedFaceDescriptor) {
+    sendToReactNative("error", "No stored face descriptor available for verification");
+    updateInstruction("No stored face data available");
+    return;
   }
+
+  try {
+    // Calculate similarity between current face and stored face
+    const similarity = calculateSimilarity(faceDescriptor, storedFaceDescriptor);
+    
+    // Define similarity threshold (0.6 is a good starting point)
+    const SIMILARITY_THRESHOLD = 0.6;
+    
+    if (similarity >= SIMILARITY_THRESHOLD) {
+      // Face verification successful
+      updateInstruction(`Verification successful! (${(similarity * 100).toFixed(1)}% match)`);
+      showVerificationResult(true, similarity);
+      
+      sendToReactNative("verification_success", "Face verification successful", {
+        similarity: similarity,
+        threshold: SIMILARITY_THRESHOLD,
+        timestamp: Date.now(),
+        descriptor: Array.from(faceDescriptor)
+      });
+    } else {
+      // Face verification failed
+      updateInstruction(`Verification failed! (${(similarity * 100).toFixed(1)}% match)`);
+      showVerificationResult(false, similarity);
+      
+      sendToReactNative("verification_failed", "Face verification failed", {
+        similarity: similarity,
+        threshold: SIMILARITY_THRESHOLD,
+        timestamp: Date.now(),
+        descriptor: Array.from(faceDescriptor)
+      });
+    }
+  } catch (error) {
+    updateInstruction("Verification error occurred");
+    sendToReactNative("error", "Face verification error: " + error.message);
+  }
+}
+
+// Add function to show verification result with visual feedback
+function showVerificationResult(success, similarity) {
+  const centerFrame = document.getElementById("center-frame");
+  
+  if (success) {
+    centerFrame.style.borderColor = "#00ff00";
+    centerFrame.style.backgroundColor = "rgba(0, 255, 0, 0.1)";
+  } else {
+    centerFrame.style.borderColor = "#ff0000";
+    centerFrame.style.backgroundColor = "rgba(255, 0, 0, 0.1)";
+  }
+  
+  // Reset after 3 seconds
+  setTimeout(() => {
+    centerFrame.style.borderColor = "";
+    centerFrame.style.backgroundColor = "";
+    updateInstruction("Position your face for verification");
+  }, 3000);
+}
+
+// Add function to calculate similarity between two face descriptors
+function calculateSimilarity(descriptor1, descriptor2) {
+  if (!descriptor1 || !descriptor2) {
+    throw new Error("Invalid descriptors provided");
+  }
+  
+  // Ensure both descriptors have the same length
+  if (descriptor1.length !== descriptor2.length) {
+    throw new Error("Descriptor lengths do not match");
+  }
+  
+  // Calculate Euclidean distance
+  let sumSquaredDiff = 0;
+  for (let i = 0; i < descriptor1.length; i++) {
+    const diff = descriptor1[i] - descriptor2[i];
+    sumSquaredDiff += diff * diff;
+  }
+  
+  const distance = Math.sqrt(sumSquaredDiff);
+  
+  // Convert distance to similarity score (0-1)
+  // Lower distance = higher similarity
+  const similarity = Math.max(0, 1 - (distance / 2));
+  
+  return similarity;
 }
 
 // Add function to set operation mode
@@ -527,11 +603,39 @@ function updateUIForMode(mode) {
 
 // Add function to receive stored face descriptor from React Native
 function receiveStoredFaceDescriptor(descriptor) {
-  storedFaceDescriptor = new Float32Array(descriptor);
+  try {
+    if (!descriptor || !Array.isArray(descriptor)) {
+      throw new Error("Invalid descriptor format");
+    }
+    
+    storedFaceDescriptor = new Float32Array(descriptor);
+    sendToReactNative("info", "Stored face descriptor received successfully");
+    console.log("Stored face descriptor received:", descriptor.length, "values");
+  } catch (error) {
+    sendToReactNative("error", "Error receiving stored descriptor: " + error.message);
+  }
+}
+
+// Add function to clear stored face descriptor
+function clearStoredFaceDescriptor() {
+  storedFaceDescriptor = null;
+  sendToReactNative("info", "Stored face descriptor cleared");
+}
+
+// Add function to get verification status
+function getVerificationStatus() {
+  return {
+    hasStoredDescriptor: storedFaceDescriptor !== null,
+    descriptorLength: storedFaceDescriptor ? storedFaceDescriptor.length : 0,
+    isVerificationMode: isVerificationMode
+  };
 }
 
 // Expose functions to React Native
 window.faceDetection = {
   setOperationMode,
   receiveStoredFaceDescriptor,
+  clearStoredFaceDescriptor,
+  getVerificationStatus,
+  calculateSimilarity
 };

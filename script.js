@@ -100,66 +100,22 @@ function updateLoadingStatus(message) {
   sendToReactNative("info", message);
 }
 
-// Device capability detection
-function checkDeviceCapability() {
-  const memory = navigator.deviceMemory || 4;
-  const cores = navigator.hardwareConcurrency || 4;
-  const hasWebGL = isWebGLAvailable();
-
-  return {
-    isLowEndDevice: memory <= 4 || cores <= 4 || !hasWebGL,
-    settings: {
-      inputSize: (memory <= 4 || cores <= 4) ? 160 : 416,
-      detectionInterval: (memory <= 4 || cores <= 4) ? 500 : 200,
-      scoreThreshold: 0.3,
-      video: {
-        width: (memory <= 4 || cores <= 4) ? 640 : 1920,
-        height: (memory <= 4 || cores <= 4) ? 480 : 1080,
-        frameRate: (memory <= 4 || cores <= 4) ? 15 : 30
-      }
-    }
-  };
-}
-
-// Check WebGL availability
-function isWebGLAvailable() {
-  try {
-    const canvas = document.createElement('canvas');
-    return !!(window.WebGLRenderingContext &&
-      (canvas.getContext('webgl') || canvas.getContext('experimental-webgl')));
-  } catch (e) {
-    return false;
-  }
-}
-
-// Modify the loadModels function
 async function loadModels() {
   try {
     updateLoadingStatus("Waiting for face-api.js...");
     const faceapi = await waitForFaceAPI();
-    const deviceCaps = checkDeviceCapability();
 
-    updateLoadingStatus("Loading essential models...");
+    updateLoadingStatus("Loading...");
     const MODEL_URL = "https://justadudewhohacks.github.io/face-api.js/models";
 
-    // Load essential detector first
-    await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
-    updateLoadingStatus("Basic detection ready");
+    await Promise.all([
+      faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+      faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+      faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
+    ]);
 
-    // Start basic detection immediately
+    updateLoadingStatus("Models loaded successfully!");
     loadingScreen.style.display = "none";
-    startBasicDetection();
-
-    // Load remaining models in background for higher-end devices
-    if (!deviceCaps.isLowEndDevice) {
-      updateLoadingStatus("Loading additional models...");
-      await Promise.all([
-        faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
-        faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
-      ]);
-      updateLoadingStatus("All models loaded!");
-    }
-
     return faceapi;
   } catch (err) {
     updateLoadingStatus("Error loading models: " + err.message);
@@ -209,9 +165,6 @@ document.head.appendChild(style);
 
 async function startCamera() {
   try {
-    const deviceCaps = checkDeviceCapability();
-    updateLoadingStatus(`Starting camera (${deviceCaps.isLowEndDevice ? 'low-end' : 'high-end'} mode)...`);
-
     updateLoadingStatus("Checking camera access...");
 
     if (!navigator.mediaDevices) {
@@ -235,10 +188,10 @@ async function startCamera() {
     const stream = await navigator.mediaDevices.getUserMedia({
       video: {
         facingMode: "user",
-        width: { ideal: deviceCaps.settings.video.width },
-        height: { ideal: deviceCaps.settings.video.height },
-        frameRate: { ideal: deviceCaps.settings.video.frameRate }
-      }
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
+        frameRate: { ideal: 30 },
+      },
     });
 
     updateLoadingStatus("Camera access granted, setting up video...");
@@ -267,17 +220,21 @@ async function startCamera() {
     // Initialize UI in default mode
     updateUIForMode("verify");
 
-    // Modified detection interval
     setInterval(async () => {
       if (video.readyState < 4) return;
 
       try {
+        if (displaySize.width === 0 || displaySize.height === 0) {
+          updateDisplaySize();
+          return;
+        }
+
         const detections = await faceapi
           .detectAllFaces(
             video,
             new faceapi.TinyFaceDetectorOptions({
-              inputSize: deviceCaps.settings.inputSize,
-              scoreThreshold: deviceCaps.settings.scoreThreshold
+              inputSize: 416,
+              scoreThreshold: 0.3,
             })
           )
           .withFaceLandmarks()
@@ -368,8 +325,7 @@ async function startCamera() {
         logError("Face detection error: " + err.message);
         sendToReactNative("error", "Face detection error: " + err.message);
       }
-    }, deviceCaps.settings.detectionInterval);
-
+    }, 200);
   } catch (err) {
     const errorMessage = "Camera Error: " + err.message;
     updateLoadingStatus(errorMessage);
@@ -523,15 +479,15 @@ function verifyFace(faceDescriptor) {
   try {
     // Calculate similarity between current face and stored face
     const similarity = calculateSimilarity(faceDescriptor, storedFaceDescriptor);
-
+    
     // Define similarity threshold (0.6 is a good starting point)
     const SIMILARITY_THRESHOLD = 0.6;
-
+    
     if (similarity >= SIMILARITY_THRESHOLD) {
       // Face verification successful
       updateInstruction(`Verification successful! (${(similarity * 100).toFixed(1)}% match)`);
       showVerificationResult(true, similarity);
-
+      
       sendToReactNative("verification_success", "Face verification successful", {
         similarity: similarity,
         threshold: SIMILARITY_THRESHOLD,
@@ -542,7 +498,7 @@ function verifyFace(faceDescriptor) {
       // Face verification failed
       updateInstruction(`Verification failed! (${(similarity * 100).toFixed(1)}% match)`);
       showVerificationResult(false, similarity);
-
+      
       sendToReactNative("verification_failed", "Face verification failed", {
         similarity: similarity,
         threshold: SIMILARITY_THRESHOLD,
@@ -559,7 +515,7 @@ function verifyFace(faceDescriptor) {
 // Add function to show verification result with visual feedback
 function showVerificationResult(success, similarity) {
   const centerFrame = document.getElementById("center-frame");
-
+  
   if (success) {
     centerFrame.style.borderColor = "#00ff00";
     centerFrame.style.backgroundColor = "rgba(0, 255, 0, 0.1)";
@@ -567,7 +523,7 @@ function showVerificationResult(success, similarity) {
     centerFrame.style.borderColor = "#ff0000";
     centerFrame.style.backgroundColor = "rgba(255, 0, 0, 0.1)";
   }
-
+  
   // Reset after 3 seconds
   setTimeout(() => {
     centerFrame.style.borderColor = "";
@@ -581,25 +537,25 @@ function calculateSimilarity(descriptor1, descriptor2) {
   if (!descriptor1 || !descriptor2) {
     throw new Error("Invalid descriptors provided");
   }
-
+  
   // Ensure both descriptors have the same length
   if (descriptor1.length !== descriptor2.length) {
     throw new Error("Descriptor lengths do not match");
   }
-
+  
   // Calculate Euclidean distance
   let sumSquaredDiff = 0;
   for (let i = 0; i < descriptor1.length; i++) {
     const diff = descriptor1[i] - descriptor2[i];
     sumSquaredDiff += diff * diff;
   }
-
+  
   const distance = Math.sqrt(sumSquaredDiff);
-
+  
   // Convert distance to similarity score (0-1)
   // Lower distance = higher similarity
   const similarity = Math.max(0, 1 - (distance / 2));
-
+  
   return similarity;
 }
 
@@ -608,10 +564,10 @@ function setOperationMode(mode) {
   isRegistrationMode = mode === "register";
   isVerificationMode = mode === "verify";
   registrationStartTime = null;
-
+  
   // Update UI based on mode
   updateUIForMode(mode);
-
+  
   sendToReactNative("info", `Mode set to: ${mode}`);
 }
 
@@ -620,7 +576,7 @@ function updateUIForMode(mode) {
   const instructions = document.getElementById("instructions");
   const centerFrame = document.getElementById("center-frame");
   const registerBtn = document.getElementById("register-btn");
-
+  
   if (mode === "register") {
     // Show registration UI
     registerBtn.style.display = "none";
@@ -651,7 +607,7 @@ function receiveStoredFaceDescriptor(descriptor) {
     if (!descriptor || !Array.isArray(descriptor)) {
       throw new Error("Invalid descriptor format");
     }
-
+    
     storedFaceDescriptor = new Float32Array(descriptor);
     sendToReactNative("info", "Stored face descriptor received successfully");
     console.log("Stored face descriptor received:", descriptor.length, "values");
@@ -683,58 +639,3 @@ window.faceDetection = {
   getVerificationStatus,
   calculateSimilarity
 };
-
-async function startBasicDetection() {
-  const deviceCaps = checkDeviceCapability();
-  let detectionActive = true;
-
-  const detect = async () => {
-    if (!detectionActive || video.readyState < 4) return;
-
-    try {
-      const detections = await faceapi.detectAllFaces(
-        video,
-        new faceapi.TinyFaceDetectorOptions({
-          inputSize: deviceCaps.settings.inputSize,
-          scoreThreshold: deviceCaps.settings.scoreThreshold
-        })
-      );
-
-      const ctx = canvas.getContext("2d");
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-      if (detections.length > 0) {
-        const detection = faceapi.resizeResults(detections[0], displaySize);
-        const box = detection.detection.box;
-
-        // Draw a simple box around the face
-        ctx.beginPath();
-        ctx.rect(box.x, box.y, box.width, box.height);
-        ctx.strokeStyle = "rgba(0, 255, 255, 0.5)";
-        ctx.lineWidth = 2;
-        ctx.stroke();
-
-        // Show basic instructions
-        updateInstruction("Face detected - Loading additional features...");
-      } else {
-        updateInstruction("Position your face in the frame");
-      }
-
-    } catch (err) {
-      console.error("Basic detection error:", err);
-      detectionActive = false;
-    }
-
-    // Continue detection loop
-    if (detectionActive) {
-      setTimeout(detect, deviceCaps.settings.detectionInterval);
-    }
-  };
-
-  // Start detection loop
-  detect();
-
-  return () => {
-    detectionActive = false; // Function to stop detection if needed
-  };
-}

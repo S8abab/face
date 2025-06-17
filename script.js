@@ -165,6 +165,13 @@ document.head.appendChild(style);
 
 async function startCamera() {
   try {
+    // Check device capabilities first
+    detectLowEndDevice();
+    
+    if (isLowEndDevice) {
+      updateLoadingStatus("Low-end device detected, using optimized settings");
+    }
+
     updateLoadingStatus("Checking camera access...");
 
     if (!navigator.mediaDevices) {
@@ -188,10 +195,10 @@ async function startCamera() {
     const stream = await navigator.mediaDevices.getUserMedia({
       video: {
         facingMode: "user",
-        width: { ideal: 1920 },
-        height: { ideal: 1080 },
-        frameRate: { ideal: 30 },
-      },
+        width: { ideal: isLowEndDevice ? 640 : 1920 },
+        height: { ideal: isLowEndDevice ? 480 : 1080 },
+        frameRate: { ideal: isLowEndDevice ? 15 : 30 }
+      }
     });
 
     updateLoadingStatus("Camera access granted, setting up video...");
@@ -220,8 +227,22 @@ async function startCamera() {
     // Initialize UI in default mode
     updateUIForMode("verify");
 
-    setInterval(async () => {
-      if (video.readyState < 4) return;
+    // Replace the existing setInterval with this optimized version
+    let lastDetectionTime = 0;
+    const DETECTION_INTERVAL = isLowEndDevice ? 500 : 200;
+
+    const detectionLoop = async () => {
+      if (video.readyState < 4) {
+        requestAnimationFrame(detectionLoop);
+        return;
+      }
+
+      const now = Date.now();
+      if (now - lastDetectionTime < DETECTION_INTERVAL) {
+        requestAnimationFrame(detectionLoop);
+        return;
+      }
+      lastDetectionTime = now;
 
       try {
         if (displaySize.width === 0 || displaySize.height === 0) {
@@ -325,7 +346,10 @@ async function startCamera() {
         logError("Face detection error: " + err.message);
         sendToReactNative("error", "Face detection error: " + err.message);
       }
-    }, 200);
+    };
+
+    // Start the detection loop
+    requestAnimationFrame(detectionLoop);
   } catch (err) {
     const errorMessage = "Camera Error: " + err.message;
     updateLoadingStatus(errorMessage);
@@ -340,9 +364,29 @@ if (document.readyState === "complete") {
   window.addEventListener("load", startCamera);
 }
 
+// Replace existing drawScanningAnimation function
 function drawScanningAnimation(ctx, centerX, centerY, size, progress) {
-  // Clear previous drawings
   ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Simplified animation for low-end devices
+  if (isLowEndDevice) {
+    // Basic circle
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, size / 2, 0, 2 * Math.PI);
+    ctx.strokeStyle = "rgba(0, 255, 255, 0.3)";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // Progress arc
+    const startAngle = -Math.PI / 2;
+    const endAngle = startAngle + 2 * Math.PI * progress;
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, size / 2, startAngle, endAngle);
+    ctx.strokeStyle = "rgba(0, 255, 255, 0.8)";
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    return;
+  }
 
   // Draw outer ring
   ctx.beginPath();
@@ -639,3 +683,48 @@ window.faceDetection = {
   getVerificationStatus,
   calculateSimilarity
 };
+
+let isLowEndDevice = false;
+let detectorOptions = {
+  inputSize: 416,
+  scoreThreshold: 0.3
+};
+
+// Add device detection function
+function detectLowEndDevice() {
+  const memory = navigator.deviceMemory || 4;
+  const processors = navigator.hardwareConcurrency || 4;
+  isLowEndDevice = memory <= 4 || processors <= 4;
+  
+  // Adjust options for low-end devices
+  if (isLowEndDevice) {
+    detectorOptions.inputSize = 160;
+    console.log("Low-end device detected, using optimized settings");
+  }
+  
+  return isLowEndDevice;
+}
+
+// Add cleanup function
+function cleanup() {
+  // Stop video stream
+  if (video.srcObject) {
+    const tracks = video.srcObject.getTracks();
+    tracks.forEach(track => track.stop());
+  }
+  
+  // Remove event listeners
+  window.removeEventListener("resize", updateDisplaySize);
+  
+  // Clear canvas
+  const ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  
+  // Reset variables
+  storedFaceDescriptor = null;
+  lastFacePosition = null;
+  faceQualityScores = [];
+}
+
+// Add event listener for cleanup
+window.addEventListener('unload', cleanup);

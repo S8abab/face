@@ -18,6 +18,10 @@ const MIN_FACE_SIZE = 100; // minimum face size in pixels
 const MAX_FACES_ALLOWED = 1;
 const MIN_CONFIDENCE_SCORE = 0.7;
 
+// Registration descriptor buffer for averaging
+let registrationDescriptors = [];
+const REGISTRATION_FRAMES = 5;
+
 // Add loading screen element
 const loadingScreen = document.createElement("div");
 loadingScreen.id = "loading-screen";
@@ -395,12 +399,13 @@ function drawScanningAnimation(ctx, centerX, centerY, size, progress) {
   ctx.fill();
 }
 
-// Modify registerFace function
+// Modify registerFace function to average multiple descriptors
 function registerFace(faceDescriptor) {
   if (!registrationStartTime) {
     registrationStartTime = Date.now();
     updateInstruction("Keep your face still");
     updateCountdown(3);
+    registrationDescriptors = [];
     return;
   }
 
@@ -418,6 +423,11 @@ function registerFace(faceDescriptor) {
     // Still counting down
     const remainingTime = Math.ceil((3000 - elapsedTime) / 1000);
     updateCountdown(remainingTime);
+    // Collect descriptors for averaging
+    registrationDescriptors.push(faceDescriptor);
+    if (registrationDescriptors.length > REGISTRATION_FRAMES) {
+      registrationDescriptors.shift(); // Keep only the latest N
+    }
     return;
   }
 
@@ -425,13 +435,29 @@ function registerFace(faceDescriptor) {
   if (!registrationCompleted) {
     registrationCompleted = true;
 
-    // Send the descriptor to React Native
+    // Average the collected descriptors
+    let averagedDescriptor = null;
+    if (registrationDescriptors.length > 0) {
+      const length = registrationDescriptors[0].length;
+      averagedDescriptor = new Float32Array(length);
+      for (let i = 0; i < length; i++) {
+        let sum = 0;
+        for (let d = 0; d < registrationDescriptors.length; d++) {
+          sum += registrationDescriptors[d][i];
+        }
+        averagedDescriptor[i] = sum / registrationDescriptors.length;
+      }
+    } else {
+      averagedDescriptor = faceDescriptor;
+    }
+
+    // Send the averaged descriptor to React Native
     if (window.ReactNativeWebView) {
       window.ReactNativeWebView.postMessage(
         JSON.stringify({
           type: "register_face",
           data: {
-            descriptor: Array.from(faceDescriptor),
+            descriptor: Array.from(averagedDescriptor),
             timestamp: Date.now(),
           },
         })
@@ -440,9 +466,10 @@ function registerFace(faceDescriptor) {
 
     // Hide instructions and reset
     registrationStartTime = null;
+    registrationDescriptors = [];
     setOperationMode("verify");
     updateCountdown("");
-    console.log("Face registration completed and descriptor sent");
+    console.log("Face registration completed and averaged descriptor sent");
     sendToReactNative("success", "Face registration completed!");
   }
 }
@@ -461,7 +488,7 @@ function updateCountdown(seconds) {
   }
 }
 
-// Add function to handle face verification
+// Update verifyFace to use a lower threshold and add debug logging
 function verifyFace(faceDescriptor) {
   if (!storedFaceDescriptor) {
     return;
@@ -471,8 +498,20 @@ function verifyFace(faceDescriptor) {
     // Calculate distance between current face and stored face
     const distance = calculateDistance(faceDescriptor, storedFaceDescriptor);
 
-    // Typical threshold for face-api.js is 0.6
-    const DISTANCE_THRESHOLD = 0.6;
+    // Lower threshold for stricter verification
+    const DISTANCE_THRESHOLD = 0.5;
+
+    // Debug logging
+    console.log(
+      "[Verification] Distance:",
+      distance,
+      "Threshold:",
+      DISTANCE_THRESHOLD
+    );
+    sendToReactNative(
+      "debug",
+      `Verification distance: ${distance}, threshold: ${DISTANCE_THRESHOLD}`
+    );
 
     if (distance < DISTANCE_THRESHOLD) {
       // Face verification successful

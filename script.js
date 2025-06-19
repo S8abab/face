@@ -468,28 +468,24 @@ function verifyFace(faceDescriptor) {
   }
 
   try {
-    // Calculate similarity between current face and stored face
-    const similarity = calculateSimilarity(
-      faceDescriptor,
-      storedFaceDescriptor
-    );
+    // Calculate distance between current face and stored face
+    const distance = calculateDistance(faceDescriptor, storedFaceDescriptor);
 
-    // Define similarity threshold (0.6 is a good starting point)
-    const SIMILARITY_THRESHOLD = 0.6;
+    // Typical threshold for face-api.js is 0.6
+    const DISTANCE_THRESHOLD = 0.6;
 
-    if (similarity >= SIMILARITY_THRESHOLD) {
+    if (distance < DISTANCE_THRESHOLD) {
       // Face verification successful
       updateInstruction(
-        `Verification successful! (${(similarity * 100).toFixed(1)}% match)`
+        `Verification successful! (distance: ${distance.toFixed(3)})`
       );
-      showVerificationResult(true, similarity);
-
+      showVerificationResult(true, 1 - distance); // or just pass distance
       sendToReactNative(
         "verification_success",
         "Face verification successful",
         {
-          similarity: similarity,
-          threshold: SIMILARITY_THRESHOLD,
+          distance: distance,
+          threshold: DISTANCE_THRESHOLD,
           timestamp: Date.now(),
           descriptor: Array.from(faceDescriptor),
         }
@@ -497,13 +493,12 @@ function verifyFace(faceDescriptor) {
     } else {
       // Face verification failed
       updateInstruction(
-        `Verification failed! (${(similarity * 100).toFixed(1)}% match)`
+        `Verification failed! (distance: ${distance.toFixed(3)})`
       );
-      showVerificationResult(false, similarity);
-
+      showVerificationResult(false, 1 - distance);
       sendToReactNative("verification_failed", "Face verification failed", {
-        similarity: similarity,
-        threshold: SIMILARITY_THRESHOLD,
+        distance: distance,
+        threshold: DISTANCE_THRESHOLD,
         timestamp: Date.now(),
         descriptor: Array.from(faceDescriptor),
       });
@@ -534,31 +529,20 @@ function showVerificationResult(success, similarity) {
   }, 3000);
 }
 
-// Add function to calculate similarity between two face descriptors
-function calculateSimilarity(descriptor1, descriptor2) {
+// Add function to calculate distance between two face descriptors
+function calculateDistance(descriptor1, descriptor2) {
   if (!descriptor1 || !descriptor2) {
     throw new Error("Invalid descriptors provided");
   }
-
-  // Ensure both descriptors have the same length
   if (descriptor1.length !== descriptor2.length) {
     throw new Error("Descriptor lengths do not match");
   }
-
-  // Calculate Euclidean distance
   let sumSquaredDiff = 0;
   for (let i = 0; i < descriptor1.length; i++) {
     const diff = descriptor1[i] - descriptor2[i];
     sumSquaredDiff += diff * diff;
   }
-
-  const distance = Math.sqrt(sumSquaredDiff);
-
-  // Convert distance to similarity score (0-1)
-  // Lower distance = higher similarity
-  const similarity = Math.max(0, 1 - distance / 2);
-
-  return similarity;
+  return Math.sqrt(sumSquaredDiff);
 }
 
 // Add function to set operation mode
@@ -641,5 +625,5 @@ window.faceDetection = {
   receiveStoredFaceDescriptor,
   clearStoredFaceDescriptor,
   getVerificationStatus,
-  calculateSimilarity,
+  calculateDistance,
 };

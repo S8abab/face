@@ -188,9 +188,9 @@ async function startCamera() {
     const stream = await navigator.mediaDevices.getUserMedia({
       video: {
         facingMode: "user",
-        width: { ideal: 1920 },
-        height: { ideal: 1080 },
-        frameRate: { ideal: 30 },
+        width: { ideal: 640 },
+        height: { ideal: 480 },
+        frameRate: { ideal: 15 },
       },
     });
 
@@ -212,7 +212,7 @@ async function startCamera() {
     const faceapi = await loadModels();
 
     updateDisplaySize();
-    window.addEventListener("resize", updateDisplaySize);
+    window.addEventListener("resize", updateDisplaySize, { passive: true });
 
     // Set initial mode to verification
     setOperationMode("verify");
@@ -233,8 +233,8 @@ async function startCamera() {
           .detectAllFaces(
             video,
             new faceapi.TinyFaceDetectorOptions({
-              inputSize: 416,
-              scoreThreshold: 0.3,
+              inputSize: 160,
+              scoreThreshold: 0.4,
             })
           )
           .withFaceLandmarks()
@@ -325,7 +325,7 @@ async function startCamera() {
         logError("Face detection error: " + err.message);
         sendToReactNative("error", "Face detection error: " + err.message);
       }
-    }, 200);
+    }, 500);
   } catch (err) {
     const errorMessage = "Camera Error: " + err.message;
     updateLoadingStatus(errorMessage);

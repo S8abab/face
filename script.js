@@ -447,13 +447,6 @@ function registerFace(faceDescriptor) {
   }
 }
 
-// Modify the registration button click handler
-document.getElementById("register-btn").addEventListener("click", () => {
-  setOperationMode("register");
-  registrationCompleted = false; // Reset the completion flag
-  sendToReactNative("info", "Starting face registration process");
-});
-
 function updateInstruction(message) {
   const instructionElement = document.getElementById("current-instruction");
   if (instructionElement) {
@@ -584,25 +577,20 @@ function setOperationMode(mode) {
 function updateUIForMode(mode) {
   const instructions = document.getElementById("instructions");
   const centerFrame = document.getElementById("center-frame");
-  const registerBtn = document.getElementById("register-btn");
 
   if (mode === "register") {
     // Show registration UI
-    registerBtn.style.display = "none";
     instructions.classList.remove("hidden");
     centerFrame.classList.add("active");
     updateInstruction("Position your face in the center circle");
   } else if (mode === "verify") {
     // Verification mode - hide registration UI and register button
-    registerBtn.style.display = "none";
     instructions.classList.add("hidden");
     centerFrame.classList.remove("active");
     updateInstruction("");
     updateCountdown("");
   } else {
     // Default mode - show only the register button
-    registerBtn.style.display = "block";
-    registerBtn.textContent = "Scan Face";
     instructions.classList.add("hidden");
     centerFrame.classList.remove("active");
     updateInstruction("");

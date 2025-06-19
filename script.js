@@ -214,11 +214,11 @@ async function startCamera() {
     updateDisplaySize();
     window.addEventListener("resize", updateDisplaySize, { passive: true });
 
-    // Set initial mode to verification
-    setOperationMode("verify");
+    // Set initial mode to default (show only the register button)
+    setOperationMode("default");
 
     // Initialize UI in default mode
-    updateUIForMode("verify");
+    updateUIForMode("default");
 
     setInterval(async () => {
       if (video.readyState < 4) return;
